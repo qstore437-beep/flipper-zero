@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Flipper Zero Simulator</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body { 
+            margin:0; padding:0; background:#111; 
+            display:flex; justify-content:center; align-items:center; 
+            min-height:100vh; 
+            touch-action: manipulation;
+        }
+        
+        .flipper {
+            width: 92vw;
+            max-width: 420px;
+            height: 240px;
+            background: linear-gradient(#e8e8e8, #d8d8d8);
+            border: 14px solid #1c1c1c;
+            border-radius: 45px 25px 25px 45px;
+            position: relative;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.7), inset 0 8px 15px rgba(255,255,255,0.5);
+            padding: 16px;
+            margin: 10px;
+        }
+        .screen-container {
+            width: 198px; height: 128px;
+            background: #1c1c1c;
+            border: 6px solid #333;
+            border-radius: 8px;
+            position: absolute;
+            left: 28px; top: 36px;
+            overflow: hidden;
+        }
+        .screen {
+            width: 100%; height: 100%;
+            background: #c9b15f;
+            color: #111;
+            padding: 8px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 11px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #menu { list-style: none; padding: 0; margin: 0; transition: transform 0.25s ease; }
+        #menu li { padding: 5px 8px; margin: 2px 0; cursor: pointer; border-left: 4px solid transparent; }
+        #menu li.selected { background: #000 !important; color: #ffffff !important; border-left: 4px solid #c9b15f; }
+
+        .success { color: #006400; animation: blink 1.2s infinite; }
+        @keyframes blink { 50% { opacity: 0.3; } }
+
+        video { width: 100%; height: 100%; object-fit: cover; }
+        .dpad-container { position: absolute; right: 32px; top: 38px; }
+        .dpad { width: 108px; height: 108px; background: #e67e22; border-radius: 50%; position: relative; box-shadow: 0 8px 0 #b35e10; }
+        .dpad-center { width: 42px; height: 42px; background: #e67e22; border: 6px solid #b35e10; border-radius: 50%; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+        .arrow { position: absolute; color: #111; font-size: 26px; cursor: pointer; user-select: none; }
+        .up    { top: 8px; left: 50%; transform: translateX(-50%); }
+        .down  { bottom: 8px; left: 50%; transform: translateX(-50%); }
+        .left  { left: 8px; top: 50%; transform: translateY(-50%); }
+        .right { right: 8px; top: 50%; transform: translateY(-50%); }
+        .ok-btn {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+            width: 38px; height: 38px; background: #111; color: #e67e22;
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            font-size: 11px; cursor: pointer;
+        }
+        .back-btn {
+            position: absolute; right: 38px; bottom: 48px;
+            width: 34px; height: 34px; background: #e67e22; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            color: #111; font-size: 18px; cursor: pointer;
+        }
+        .logo { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%); font-size: 20px; color: #e67e22; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="flipper">
+        <div class="screen-container">
+            <div class="screen" id="screen"></div>
+        </div>
+
+        <div class="dpad-container">
+            <div class="dpad">
+                <div class="dpad-center"></div>
+                <div class="arrow up" onclick="pressUp()">▲</div>
+                <div class="arrow down" onclick="pressDown()">▼</div>
+                <div class="arrow left" onclick="pressLeft()">◀</div>
+                <div class="arrow right" onclick="pressRight()">▶</div>
+                <div class="ok-btn" onclick="pressOk()">OK</div>
+            </div>
+        </div>
+
+        <div class="back-btn" onclick="pressBack()">↩</div>
+        <div class="logo">FLIPPER</div>
+    </div>
+
+    <script>
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function beep(f, d) { 
+            const o = audioCtx.createOscillator(); 
+            const g = audioCtx.createGain();
+            o.type = 'square'; o.frequency.value = f; g.gain.value = 0.4;
+            o.connect(g).connect(audioCtx.destination);
+            o.start(); setTimeout(() => o.stop(), d);
+        }
+
+        let currentIndex = 0;
+        let isInApp = false;
+        let scrollOffset = 0;
+        let gameInterval = null;
+        let videoStream = null;
+        const visibleItems = 5;
+
+        const menuItems = [
+            "→ Sub-GHz", "→ 125 kHz RFID", "→ NFC", "→ Infrared", 
+            "→ Bad USB", "→ GPIO", "→ Snake Game", "→ Camera",
+            "→ 433MHz Attacks", "→ WiFi Deauther", "→ Tools"
+        ];
+
+        function renderMenu() {
+            let html = `<ul id="menu" style="list-style:none; padding:0; margin:0; transform: translateY(-${scrollOffset * 26}px);">`;
+            menuItems.forEach((item, i) => {
+                html += `<li class="${i === currentIndex ? 'selected' : ''}">${item}</li>`;
+            });
+            html += `</ul>`;
+            document.getElementById('screen').innerHTML = html;
+        }
+
+        function updateScroll() {
+            if (currentIndex >= scrollOffset + visibleItems) scrollOffset = currentIndex - visibleItems + 1;
+            if (currentIndex < scrollOffset) scrollOffset = currentIndex;
+            renderMenu();
+        }
+
+        function pressUp() { if(isInApp) return; currentIndex = (currentIndex-1+menuItems.length)%menuItems.length; beep(1500,25); updateScroll(); }
+        function pressDown() { if(isInApp) return; currentIndex = (currentIndex+1)%menuItems.length; beep(1300,25); updateScroll(); }
+        function pressLeft() { beep(900,40); showMainMenu(); }
+        function pressBack() { beep(700,60); showMainMenu(); }
+        function pressRight() { beep(1100,40); }
+
+        function startCamera() {
+            isInApp = true;
+            const screen = document.getElementById('screen');
+            screen.innerHTML = `
+                <div style="text-align:center; font-size:10px; margin-bottom:4px;">CAMERA</div>
+                <video id="cameraFeed" autoplay playsinline style="width:100%; height:102px; background:#000;"></video>
+                <div style="text-align:center; font-size:10px; margin-top:4px;">Recording...</div>
+                <div style="position:absolute; bottom:4px; left:8px; font-size:9px;">← Exit</div>
+            `;
+
+            const video = document.getElementById('cameraFeed');
+            
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+                .then(stream => {
+                    videoStream = stream;
+                    video.srcObject = stream;
+                })
+                .catch(err => {
+                    screen.innerHTML = `<div style="text-align:center; margin-top:40px;">خطأ في الوصول للكاميرا<br><br>يرجى السماح بالوصول</div>`;
+                });
+        }
+
+        function pressOk() {
+            if (isInApp) return;
+            beep(1800,40); setTimeout(() => beep(2400,120), 50);
+
+            if (menuItems[currentIndex] === "→ Camera") {
+                startCamera();
+            } else if (menuItems[currentIndex] === "→ Snake Game") {
+                // Snake game code (مختصرة)
+                alert("Snake Game قادمة في التحديث القادم 😊");
+                showMainMenu();
+            } else {
+                isInApp = true;
+                const screen = document.getElementById('screen');
+                screen.innerHTML = `
+                    <div style="text-align:center; margin-top:25px;">
+                        ${menuItems[currentIndex]}<br><br>
+                        <span class="success">✓ تم الاختراق بنجاح</span>
+                    </div>
+                    <div style="position:absolute; bottom:6px; left:8px; font-size:10px;">← للعودة</div>`;
+            }
+        }
+
+        function showMainMenu() {
+            if (gameInterval) clearInterval(gameInterval);
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+            isInApp = false;
+            scrollOffset = 0;
+            currentIndex = 0;
+            renderMenu();
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === "ArrowUp") pressUp();
+            if (e.key === "ArrowDown") pressDown();
+            if (e.key === "ArrowLeft" || e.key === "Backspace") pressLeft();
+            if (e.key === "ArrowRight") pressRight();
+            if (e.key === "Enter") pressOk();
+        });
+
+        window.onload = showMainMenu;
+    </script>
+</body>
+</html>
